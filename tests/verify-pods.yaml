@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-cp
+  labels: { app: sandbox-cni-verify }
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: ${CLUSTER_NAME}-control-plane
+  tolerations:
+    - operator: Exists
+  containers:
+    - name: c
+      image: nicolaka/netshoot:latest
+      command: ["sleep", "3600"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-w
+  labels: { app: sandbox-cni-verify }
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: ${CLUSTER_NAME}-worker
+  containers:
+    - name: c
+      image: nicolaka/netshoot:latest
+      command: ["sleep", "3600"]
+

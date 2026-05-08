@@ -1,0 +1,93 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: "3"
+
+vars:
+    CLUSTER_NAME: sandbox-cni
+    IMAGE_REPO: ghcr.io/kasumimercury/sandbox-cni
+    IMAGE_TAG: dev
+    IMAGE: "{{.IMAGE_REPO}}:{{.IMAGE_TAG}}"
+    NAMESPACE: kube-system
+    KIND_CONFIG: kind-config.yaml
+    MANIFEST: manifest.yaml
+
+tasks:
+    build:
+        desc: Build the sandbox-cni Docker image
+        sources:
+            - main.go
+            - go.mod
+            - go.sum
+            - install.sh
+            - Dockerfile
+        status:
+            - docker image inspect {{.IMAGE}} >/dev/null 2>&1
+        cmds:
+            - docker build -t {{.IMAGE}} .
+
+    kind:up:
+        desc: Create the kind cluster (idempotent)
+        status:
+            - kind get clusters | grep -qx {{.CLUSTER_NAME}}
+        cmds:
+            - kind create cluster --name {{.CLUSTER_NAME}} --config {{.KIND_CONFIG}}
+
+    kind:down:
+        desc: Delete the kind cluster
+        cmds:
+            - kind delete cluster --name {{.CLUSTER_NAME}}
+
+    kind:load:
+        desc: Load the Docker image into kind nodes
+        deps: [build, kind:up]
+        cmds:
+            - kind load docker-image {{.IMAGE}} --name {{.CLUSTER_NAME}}
+
+    deploy:
+        desc: Apply manifest and wait for DaemonSet to become Ready
+        deps: [kind:load]
+        cmds:
+            - kubectl apply -f {{.MANIFEST}}
+            - kubectl -n {{.NAMESPACE}} rollout status ds/sandbox-cni --timeout=120s
+            - kubectl wait --for=condition=Ready nodes --all --timeout=120s
+
+    verify:
+        desc: Verify CNI behavior (Pod IP assignment, cross-node ping, external ping)
+        deps: [deploy]
+        env:
+            CLUSTER_NAME: "{{.CLUSTER_NAME}}"
+        cmds:
+            - sh tests/verify.sh
+
+    up:
+        desc: Build, deploy, and verify end-to-end (one-shot)
+        deps: [verify]
+
+    redeploy:
+        desc: Rebuild and reload image, then restart DaemonSet
+        deps: [build, kind:load]
+        cmds:
+            - kubectl -n {{.NAMESPACE}} rollout restart ds/sandbox-cni
+            - kubectl -n {{.NAMESPACE}} rollout status ds/sandbox-cni --timeout=120s
+
+    logs:
+        desc: Tail DaemonSet logs from all nodes
+        cmds:
+            - kubectl -n {{.NAMESPACE}} logs -l k8s-app=sandbox-cni --tail=100
+
+    verify:clean:
+        desc: Delete verify test Pods
+        cmds:
+            - kubectl delete pod -l app=sandbox-cni-verify --ignore-not-found
+
+    undeploy:
+        desc: Remove DaemonSet and RBAC resources (cluster remains)
+        cmds:
+            - kubectl delete -f {{.MANIFEST}} --ignore-not-found
+
+    clean:
+        desc: Delete the kind cluster and local Docker image
+        deps: [kind:down]
+        cmds:
+            - docker rmi {{.IMAGE}} || true
+
