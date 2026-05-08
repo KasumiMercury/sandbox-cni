@@ -1,0 +1,7 @@
+.git
+.dockerignore
+Taskfile.yml
+kind-config.yaml
+manifest.yaml
+mise.toml
+tests/
